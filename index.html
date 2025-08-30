@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Earth Data Explorer — with 1D, 2D, 3D modes</title>
+  <style>
+    :root { --bg: #0b1020; --panel: #121a33; --text: #e8ecff; --muted: #9fb3ff; --accent: #7aa2ff; --accent-2: #35d0ff; --danger: #ff6b6b; --ok: #22c55e; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font-family: ui-sans-serif, system-ui; }
+    header { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; background: linear-gradient(90deg, #0b1020, #0e1430 40%, #0b1020); border-bottom: 1px solid rgba(255,255,255,.06); }
+    header h1 { font-size: 18px; margin: 0; font-weight: 700; }
+    .wrap { display: grid; grid-template-columns: 300px 1fr; gap: 12px; padding: 12px; }
+    @media (max-width: 960px){ .wrap { grid-template-columns: 1fr; } }
+    .panel { background: var(--panel); border: 1px solid rgba(255,255,255,.06); border-radius: 14px; padding: 12px; }
+    .btns { display:flex; flex-wrap: wrap; gap: 8px; }
+    button { border: 1px solid rgba(255,255,255,.1); background: #1a2448; color: var(--text); padding: 8px 12px; border-radius: 10px; cursor: pointer; }
+    button:hover { border-color: rgba(255,255,255,.25); }
+    .ghost { background: #0f1733; }
+    canvas { width: 100%; height: 80vh; border-radius: 14px; border: 1px solid rgba(255,255,255,.06); background:#000; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Earth Data Explorer <small>— 1D / 2D / 3D modes</small></h1>
+  </header>
+
+  <div class="wrap">
+    <section class="panel">
+      <h2>View Modes</h2>
+      <div class="btns">
+        <button id="btn3D">3D Globe</button>
+        <button id="btn2D">2D Map</button>
+        <button id="btn1D">1D Strip</button>
+      </div>
+      <label>2D Projection</label>
+      <select id="projection"><option value="equirect">Equirectangular</option><option value="mercator">Mercator</option></select>
+      <h2>NASA Layers</h2>
+      <div class="btns">
+        <button id="btnTemp">+ Land Surface Temp</button>
+        <button id="btnFire">+ Active Fires</button>
+        <button id="btnClearWms">Clear WMS</button>
+      </div>
+      <h2>CSV → GeoJSON</h2>
+      <input type="file" id="csvFile" accept=".csv" />
+      <input id="lat" type="text" placeholder="lat" />
+      <input id="lon" type="text" placeholder="lon" />
+      <input id="alt" type="text" placeholder="alt (optional)" />
+      <input id="nameCol" type="text" placeholder="name (optional)" />
+      <div class="btns">
+        <button id="btnPlot">Plot</button>
+        <button id="btnDownload">Download GeoJSON</button>
+        <button id="btnClearData">Clear</button>
+        <button id="btnDemo">Demo CSV</button>
+      </div>
+    </section>
+    <section>
+      <canvas id="globe"></canvas>
+      <canvas id="strip" style="display:none; width:100%; height:200px"></canvas>
+    </section>
+  </div>
+
+  <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
+  <script src="https://files.worldwind.arc.nasa.gov/artifactory/web/0.11.0/worldwind.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+
+  <script>
+    var wwd = new WorldWind.WorldWindow("globe");
+    wwd.addLayer(new WorldWind.BMNGLandsatLayer());
+    wwd.addLayer(new WorldWind.CompassLayer());
+    wwd.addLayer(new WorldWind.CoordinatesDisplayLayer(wwd));
+    wwd.addLayer(new WorldWind.ViewControlsLayer(wwd));
+
+    var dataLayer = new WorldWind.RenderableLayer("Data");
+    wwd.addLayer(dataLayer);
+
+    // -------- View modes --------
+    function set3D(){ document.getElementById('globe').style.display='block'; document.getElementById('strip').style.display='none'; wwd.globe = new WorldWind.Globe(new WorldWind.EarthElevationModel()); wwd.redraw(); }
+    function set2D(){ document.getElementById('globe').style.display='block'; document.getElementById('strip').style.display='none'; var g2d=new WorldWind.Globe2D(); g2d.elevationModel=new WorldWind.EarthElevationModel(); wwd.globe=g2d; setProjection(document.getElementById('projection').value); }
+    function setProjection(kind){ if(!(wwd.globe instanceof WorldWind.Globe2D)) return; wwd.projection=(kind==='mercator')?new WorldWind.ProjectionMercator():new WorldWind.ProjectionEquirectangular(); wwd.redraw(); }
+    function set1D(){ document.getElementById('globe').style.display='none'; document.getElementById('strip').style.display='block'; drawStrip(); }
+
+    document.getElementById('btn3D').onclick=set3D;
+    document.getElementById('btn2D').onclick=set2D;
+    document.getElementById('btn1D').onclick=set1D;
+    document.getElementById('projection').onchange=e=>setProjection(e.target.value);
+
+    // -------- NASA WMS --------
+    function addNeoWmsLayer(layerName, displayName){
+      var service="https://neo.gsfc.nasa.gov/wms/wms?version=1.3.0&service=WMS&request=GetCapabilities";
+      $.get(service).done(xml=>{
+        try{ var wms=new WorldWind.WmsCapabilities(xml); var caps=wms.getNamedLayer(layerName); var config=WorldWind.WmsLayer.formLayerConfiguration(caps); config.title=displayName; var layer=new WorldWind.WmsLayer(config); wwd.addLayer(layer);}catch(e){alert("Layer load failed");}
+      }).fail(()=>alert("WMS failed"));
+    }
+    btnTemp.onclick=()=>addNeoWmsLayer('MOD_LSTD_CLIM_M','Land Surface Temp');
+    btnFire.onclick=()=>addNeoWmsLayer('MOD14A1_M_FIRE','Active Fires');
+    btnClearWms.onclick=()=>{wwd.layers=wwd.layers.filter(l=>!(l instanceof WorldWind.WmsLayer)); wwd.redraw();};
+
+    // -------- CSV → GeoJSON --------
+    function csvToGeoJSON(rows, latKey, lonKey, altKey, nameKey){
+      return {type:'FeatureCollection',features:rows.map(r=>{var lat=parseFloat(r[latKey]);var lon=parseFloat(r[lonKey]);var alt=altKey?parseFloat(r[altKey]):0;if(!Number.isFinite(lat)||!Number.isFinite(lon)) return null;var props={...r};if(nameKey&&r[nameKey]) props.__label=r[nameKey];return {type:'Feature',geometry:{type:'Point',coordinates:[lon,lat,alt]},properties:props};}).filter(Boolean)};
+    }
+    function renderGeoJSON(geojson){
+      var parser=new WorldWind.GeoJSONParser(geojson);
+      parser.load(null,(g,p)=>{let cfg={}; if(g.type==='Point'){let a=new WorldWind.PlacemarkAttributes(null);a.imageScale=0.6; cfg.attributes=a; if(p.__label) cfg.name=p.__label;} return cfg;},dataLayer);
+      wwd.redraw(); drawStrip();
+    }
+
+    var uploadedGeoJSON=null;
+    csvFile.onchange=e=>{Papa.parse(e.target.files[0],{header:true,complete:r=>{window._csvRows=r.data; alert("CSV loaded");}});};
+    btnPlot.onclick=()=>{if(!window._csvRows) return alert("Upload CSV first"); uploadedGeoJSON=csvToGeoJSON(window._csvRows,lat.value,lon.value,alt.value,nameCol.value); renderGeoJSON(uploadedGeoJSON);};
+    btnDownload.onclick=()=>{if(!uploadedGeoJSON) return alert("Nothing"); var blob=new Blob([JSON.stringify(uploadedGeoJSON,null,2)],{type:'application/geo+json'}); var a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='data.geojson'; a.click();};
+    btnClearData.onclick=()=>{dataLayer.removeAllRenderables(); wwd.redraw(); drawStrip();};
+    btnDemo.onclick=()=>{var csv="name,lat,lon\nDelhi,28.6,77.2\nChennai,13.08,80.27"; var res=Papa.parse(csv,{header:true}); window._csvRows=res.data; uploadedGeoJSON=csvToGeoJSON(window._csvRows,'lat','lon','','name'); renderGeoJSON(uploadedGeoJSON);};
+
+    // -------- 1D Strip --------
+    var strip=document.getElementById('strip'); var sctx=strip.getContext('2d');
+    function drawStrip(){
+      var W=strip.width=strip.clientWidth, H=strip.height=strip.clientHeight;
+      sctx.fillStyle='#0b1020'; sctx.fillRect(0,0,W,H);
+      sctx.strokeStyle='rgba(255,255,255,0.2)'; sctx.beginPath(); sctx.moveTo(0,H-20); sctx.lineTo(W,H-20); sctx.stroke();
+      [0,90,180,270,360].forEach(deg=>{var x=(deg/360)*W; sctx.fillStyle='rgba(255,255,255,0.6)'; sctx.fillRect(x-0.5,H-25,1,10); sctx.fillText(deg+'°',x-10,H-5);});
+      var longs=[]; dataLayer.renderables.forEach(r=>{if(r&&r.position) longs.push((r.position.longitude+360)%360);});
+      sctx.fillStyle='#7aa2ff'; longs.forEach(lon=>{var x=(lon/360)*W; var y=10+Math.random()*(H-40); sctx.beginPath(); sctx.arc(x,y,3,0,2*Math.PI); sctx.fill();});
+      sctx.fillStyle='#fff'; sctx.fillText(longs.length+" pts",5,12);
+    }
+  </script>
+</body>
+</html>
